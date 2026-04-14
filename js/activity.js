@@ -3,7 +3,7 @@
 // TODO: add your uniqname to the HTML (use id #uniqname) file so that your work can be identified 
 
 // TODO: import data using d3.csv()
-const dataFile = 
+const dataFile = await d3.csv("data/routes.csv");
 
 const colornone = "#ccc";
 
@@ -23,7 +23,7 @@ select.selectAll("option")
     .data(airlines)
     .join("option")
     .attr("value", d => d)
-    .text(// TODO: build options from selector that allows us to view all airlines or filter by a specific airline);
+    .text(d => (d === "all" ? "All airlines" : `${airlineName[d] ?? d} (${d})`));
 
 // helper function to build outgoing links for each leaf node
 function bilink(root) {
@@ -80,5 +80,125 @@ draw("all"); // initial draw
 // TODO: edit link to show different colors for different airlines, you can use the airlineColor object defined above for reference
 // TODO: edit overed and outed functions to highlight connected links and nodes on hover
 function createChart(data) {
+    const width = 954;
+    const radius = width / 2;
+    const innerRadius = radius - 120;
 
+    const tree = d3.cluster()
+        .size([2 * Math.PI, innerRadius]);
+
+    const root = tree(
+        bilink(
+            d3.hierarchy(data).sort((a, b) => d3.ascending(a.data.name, b.data.name))
+        )
+    );
+
+    const leaves = root.leaves();
+    const links = leaves.flatMap(leaf => leaf.outgoing);
+
+    for (const leaf of leaves) {
+        leaf.incoming = [];
+    }
+    for (const [source, target, airline] of links) {
+        target.incoming.push([source, target, airline]);
+    }
+
+    const line = d3.lineRadial()
+        .curve(d3.curveBundle.beta(0.85))
+        .radius(d => d.y)
+        .angle(d => d.x);
+
+    const svg = d3.create("svg")
+        .attr("viewBox", [-width / 2, -width / 2, width, width])
+        .attr("width", width)
+        .attr("height", width)
+        .attr("style", "max-width: 100%; height: auto; font: 12px sans-serif;");
+
+    const link = svg.append("g")
+        .attr("stroke", colornone)
+        .attr("fill", "none")
+        .selectAll("path")
+        .data(links)
+        .join("path")
+        .style("mix-blend-mode", "multiply")
+        .attr("d", ([source, target]) => line(source.path(target)))
+        .attr("stroke", ([, , airline]) => airlineColor[airline] ?? colornone)
+        .attr("stroke-opacity", 0.35)
+        .attr("stroke-width", 1.4);
+
+    const node = svg.append("g")
+        .selectAll("text")
+        .data(leaves)
+        .join("text")
+        .attr("dy", "0.31em")
+        .attr("transform", d => `
+            rotate(${(d.x * 180 / Math.PI) - 90})
+            translate(${d.y + 8},0)
+            ${d.x >= Math.PI ? "rotate(180)" : ""}
+        `)
+        .attr("text-anchor", d => (d.x < Math.PI ? "start" : "end"))
+        .attr("fill", "#666")
+        .text(d => d.data.name)
+        .on("mouseover", overed)
+        .on("mouseout", outed);
+
+    node.append("title")
+        .text(d => [
+            `${d.data.name} (${d.parent.data.name})`,
+            `Outgoing routes: ${d.outgoing.length}`,
+            `Incoming routes: ${d.incoming.length}`
+        ].join("\n"));
+
+    function overed(event, d) {
+        node.each(n => {
+            n.target = false;
+            n.source = false;
+        });
+
+        link
+            .classed("link--target", ([, target]) => {
+                if (target === d) return true;
+                return false;
+            })
+            .classed("link--source", ([source]) => {
+                if (source === d) return true;
+                return false;
+            })
+            .attr("stroke-opacity", ([source, target]) => (source === d || target === d ? 0.95 : 0.06))
+            .attr("stroke-width", ([source, target]) => (source === d || target === d ? 2.6 : 1))
+            .each(function ([source, target]) {
+                if (target === d) source.source = true;
+                if (source === d) target.target = true;
+            })
+            .filter(([source, target]) => source === d || target === d)
+            .raise();
+
+        node
+            .classed("node--target", n => n.target)
+            .classed("node--source", n => n.source)
+            .attr("font-weight", n => (n === d || n.target || n.source ? "700" : "400"))
+            .attr("fill", n => {
+                if (n === d) return "#111";
+                if (n.target) return "#0b5ed7";
+                if (n.source) return "#d63384";
+                return "#bbb";
+            })
+            .raise();
+    }
+
+    function outed() {
+        link
+            .classed("link--target", false)
+            .classed("link--source", false)
+            .attr("stroke-opacity", 0.35)
+            .attr("stroke-width", 1.4);
+
+        node
+            .classed("node--target", false)
+            .classed("node--source", false)
+            .attr("font-weight", "400")
+            .attr("fill", "#666");
+    }
+
+    return svg.node();
 }
